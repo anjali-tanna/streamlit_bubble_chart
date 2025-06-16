@@ -88,18 +88,18 @@ end_file = st.sidebar.file_uploader("Upload End Data (CSV)", type=['csv'], key="
 
 # Chart parameters
 st.sidebar.subheader("📊 Chart Parameters")
-custom_title = st.sidebar.text_input("Chart Title", value="Topic", help="Will become 'Your Title Landscape Over Time'")
-x_column = st.sidebar.text_input("X-axis Column", value="Volume")
-y_column = st.sidebar.text_input("Y-axis Column", value="Avg. Engagement")
-size_column = st.sidebar.text_input("Size Column", value="Avg. Reach")
+custom_title = st.sidebar.text_input("Chart Title", value="Chart Title", help="Will become 'Your Title Landscape Over Time'")
+label_column = st.sidebar.text_input("Label Column", value="Topic")
 category_column = st.sidebar.text_input("Category Column", value="Category")
-label_column = st.sidebar.text_input("Label Column", value="Topics")
+x_column = st.sidebar.text_input("X-axis Column", value="X-axis")
+y_column = st.sidebar.text_input("Y-axis Column", value="Y-axis")
+size_column = st.sidebar.text_input("Size Column", value="Size")
 
 # Animation settings
 st.sidebar.subheader("🎬 Animation Settings")
 num_frames = st.sidebar.slider("Number of Frames", 30, 200, 100)
 interval = st.sidebar.slider("Speed (ms)", 50, 500, 150)
-scale = st.sidebar.number_input("Size Scale", value=0.0005, format="%.4f")
+scale = st.sidebar.number_input("Size Scale", value=0.000005, format="%.6f")
 
 # Helper functions
 @st.cache_data
