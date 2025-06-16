@@ -377,7 +377,7 @@ def main():
                         st.markdown('<div class="status-box success-box">✅ Animation created successfully!</div>', unsafe_allow_html=True)
                         
                         # Display animation
-                        st.components.v1.html(html_str, height=600, scrolling=True)
+                        st.components.v1.html(html_str, height=1000, scrolling=True)
                         
                         # Download options
                         st.markdown("### 📥 Download Options")
