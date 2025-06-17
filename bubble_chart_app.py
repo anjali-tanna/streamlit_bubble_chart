@@ -57,6 +57,11 @@ st.markdown("""
         border: 1px solid #f5c6cb;
         color: #721c24;
     }
+    .warning-box {
+        background-color: #fff3cd;
+        border: 1px solid #ffeaa7;
+        color: #856404;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -76,7 +81,7 @@ if 'colors' not in st.session_state:
 
 # Header
 st.markdown('<div class="main-header">🎯 Dynamic Bubble Chart Generator</div>', unsafe_allow_html=True)
-st.markdown("### 📂 Categories → 📊 Points → 🎬 Animate")
+st.markdown("### 📂 Categories → 📊 Points → 🎬 Animate → 📈 Static Charts")
 
 # Sidebar for configuration
 st.sidebar.title("⚙️ Configuration")
@@ -88,18 +93,25 @@ end_file = st.sidebar.file_uploader("Upload End Data (CSV)", type=['csv'], key="
 
 # Chart parameters
 st.sidebar.subheader("📊 Chart Parameters")
-custom_title = st.sidebar.text_input("Chart Title", value="Chart Title", help="Will become 'Your Title Landscape Over Time'")
-label_column = st.sidebar.text_input("Label Column", value="Topic")
+custom_title = st.sidebar.text_input("Chart Title", value="Topic", help="Will become 'Your Title Landscape Over Time'")
+x_column = st.sidebar.text_input("X-axis Column", value="Volume")
+y_column = st.sidebar.text_input("Y-axis Column", value="Avg. Engagement")
+size_column = st.sidebar.text_input("Size Column", value="Avg. Reach")
 category_column = st.sidebar.text_input("Category Column", value="Category")
-x_column = st.sidebar.text_input("X-axis Column", value="X-axis")
-y_column = st.sidebar.text_input("Y-axis Column", value="Y-axis")
-size_column = st.sidebar.text_input("Size Column", value="Size")
+label_column = st.sidebar.text_input("Label Column", value="Topics")
 
 # Animation settings
 st.sidebar.subheader("🎬 Animation Settings")
 num_frames = st.sidebar.slider("Number of Frames", 30, 200, 100)
 interval = st.sidebar.slider("Speed (ms)", 50, 500, 150)
-scale = st.sidebar.number_input("Size Scale", value=0.000005, format="%.6f")
+scale = st.sidebar.number_input("Size Scale", value=0.0005, format="%.4f")
+
+# Static chart settings
+st.sidebar.subheader("📈 Static Chart Settings")
+static_scale = st.sidebar.number_input("Static Chart Size Scale", value=0.05, format="%.3f")
+show_labels = st.sidebar.checkbox("Show Labels on Static Chart", value=True)
+show_legend = st.sidebar.checkbox("Show Legend on Static Chart", value=True)
+chart_style = st.sidebar.selectbox("Chart Style", ["Default", "Minimal", "Publication"])
 
 # Helper functions
 @st.cache_data
@@ -134,6 +146,95 @@ def generate_distinct_colors(num_colors):
         colors.append(hex_color)
     
     return colors
+
+def create_static_chart(data, params, style="Default"):
+    """Create a static bubble chart"""
+    # Apply scaling
+    data_scaled = data.copy()
+    data_scaled[params['size_column']] *= params['static_scale']
+    
+    # Create figure
+    if style == "Publication":
+        plt.style.use('seaborn-v0_8-whitegrid')
+        fig, ax = plt.subplots(figsize=(12, 8), dpi=300)
+    else:
+        fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # Create scatter plot
+    for category in data[params['category_column']].unique():
+        if pd.notna(category):
+            cat_data = data_scaled[data_scaled[params['category_column']] == category]
+            ax.scatter(
+                cat_data[params['x_column']], 
+                cat_data[params['y_column']], 
+                s=cat_data[params['size_column']], 
+                alpha=0.7 if style == "Minimal" else 0.75,
+                c=params['colors'].get(category, '#1f77b4'), 
+                label=category,
+                edgecolors='white' if style != "Minimal" else 'none', 
+                linewidth=0.8 if style != "Minimal" else 0
+            )
+    
+    # Add labels if requested
+    if params.get('show_labels', True):
+        for i, (x_val, y_val, title) in enumerate(zip(
+            data_scaled[params['x_column']], 
+            data_scaled[params['y_column']], 
+            data_scaled[params['label_column']]
+        )):
+            if pd.notna(title):
+                ax.annotate(
+                    str(title), (x_val, y_val),
+                    color='black' if style != "Publication" else '#333333',
+                    textcoords="offset points", 
+                    xytext=(0, 12), 
+                    ha='center', 
+                    fontsize=8 if style == "Minimal" else 9, 
+                    fontweight='normal'
+                )
+    
+    # Calculate medians for reference lines
+    median_x = data_scaled[params['x_column']].median()
+    median_y = data_scaled[params['y_column']].median()
+    
+    if style != "Minimal":
+        ax.axvline(median_x, color='#666666', linestyle='--', linewidth=1.0, alpha=0.6)
+        ax.axhline(median_y, color='#666666', linestyle='--', linewidth=1.0, alpha=0.6)
+    
+    # Styling based on selected style
+    if style == "Minimal":
+        ax.set_facecolor('white')
+        ax.grid(True, alpha=0.3)
+        for spine in ax.spines.values():
+            spine.set_color('#CCCCCC')
+    elif style == "Publication":
+        ax.set_facecolor('#FAFAFA')
+        ax.grid(True, alpha=0.4)
+    else:  # Default
+        ax.set_facecolor('#FAFAFA')
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+    
+    # Labels and title
+    ax.set_xlabel(params['x_column'], fontsize=12, fontweight='bold')
+    ax.set_ylabel(params['y_column'], fontsize=12, fontweight='bold')
+    ax.set_title(f'{params["title"]} Landscape - Current State', 
+                fontsize=16, fontweight='bold', pad=20)
+    
+    # Legend
+    if params.get('show_legend', True):
+        legend = ax.legend(
+            loc='upper left', 
+            bbox_to_anchor=(1.02, 1), 
+            frameon=True,
+            fancybox=True,
+            shadow=True if style != "Minimal" else False
+        )
+        legend.get_frame().set_facecolor('white')
+        legend.get_frame().set_alpha(0.9)
+    
+    plt.tight_layout()
+    return fig
 
 def create_animated_chart(start_data, end_data, params):
     """Create the animated bubble chart"""
@@ -308,7 +409,7 @@ def main():
             "Select categories to include:",
             options=st.session_state.discovered_categories,
             default=st.session_state.discovered_categories,
-            help="Choose which categories to include in your animation"
+            help="Choose which categories to include in your charts"
         )
         
         if selected_categories:
@@ -344,76 +445,169 @@ def main():
                     selected_indices = [opt[1] for opt in options if opt[0] in selected_in_category]
                     selected_points.extend(selected_indices)
             
-            # Step 5: Generate Animation
+            # Step 5: Generate Charts
             if selected_points:
-                st.markdown('<div class="step-header">🎬 Step 5: Generate Animation</div>', unsafe_allow_html=True)
+                st.markdown('<div class="step-header">📈 Step 5: Generate Charts</div>', unsafe_allow_html=True)
                 
-                if st.button("🎬 Generate Animated Chart", type="primary"):
-                    with st.spinner("Creating animation..."):
-                        # Filter data to selected points
-                        final_start = start_data.iloc[selected_points].copy().reset_index(drop=True)
-                        final_end = end_data.iloc[selected_points].copy().reset_index(drop=True)
-                        
-                        # Prepare parameters
-                        params = {
-                            'x_column': x_column,
-                            'y_column': y_column,
-                            'size_column': size_column,
-                            'category_column': category_column,
-                            'label_column': label_column,
-                            'num_frames': num_frames,
-                            'interval': interval,
-                            'scale': scale,
-                            'colors': st.session_state.colors,
-                            'title': custom_title
-                        }
-                        
-                        # Create and display animation
-                        fig, anim = create_animated_chart(final_start, final_end, params)
-                        
-                        # Convert to HTML
-                        html_str = anim.to_jshtml()
-                        
-                        st.markdown('<div class="status-box success-box">✅ Animation created successfully!</div>', unsafe_allow_html=True)
-                        
-                        # Display animation
-                        st.components.v1.html(html_str, height=1000, scrolling=True)
-                        
-                        # Download options
-                        st.markdown("### 📥 Download Options")
-                        
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            # HTML download
-                            filename = f"{custom_title.lower().replace(' ', '_')}_animation.html"
-                            st.download_button(
-                                label="📄 Download HTML",
-                                data=html_str,
-                                file_name=filename,
-                                mime="text/html"
-                            )
-                        
-                        with col2:
-                            # GIF download
-                            if st.button("🎥 Create GIF"):
-                                with st.spinner("Creating GIF..."):
-                                    gif_filename = f"{custom_title.lower().replace(' ', '_')}_animation.gif"
-                                    writer = PillowWriter(fps=10)
-                                    anim.save(gif_filename, writer=writer)
-                                    
-                                    with open(gif_filename, "rb") as f:
-                                        gif_data = f.read()
+                # Filter data to selected points
+                final_start = start_data.iloc[selected_points].copy().reset_index(drop=True)
+                final_end = end_data.iloc[selected_points].copy().reset_index(drop=True)
+                
+                # Create two tabs for different chart types
+                tab1, tab2 = st.tabs(["📈 Static Chart", "🎬 Animated Chart"])
+                
+                # Tab 1: Static Chart
+                with tab1:
+                    st.markdown("### 📈 Static Bubble Chart (End State)")
+                    
+                    col1, col2 = st.columns([3, 1])
+                    
+                    with col1:
+                        st.markdown('<div class="status-box info-box">💡 This chart shows the final state of your data using the end data points.</div>', unsafe_allow_html=True)
+                    
+                    with col2:
+                        if st.button("📈 Generate Static Chart", type="primary"):
+                            with st.spinner("Creating static chart..."):
+                                # Prepare parameters for static chart
+                                static_params = {
+                                    'x_column': x_column,
+                                    'y_column': y_column,
+                                    'size_column': size_column,
+                                    'category_column': category_column,
+                                    'label_column': label_column,
+                                    'colors': st.session_state.colors,
+                                    'title': custom_title,
+                                    'static_scale': static_scale,
+                                    'show_labels': show_labels,
+                                    'show_legend': show_legend
+                                }
+                                
+                                # Create static chart
+                                fig = create_static_chart(final_end, static_params, chart_style)
+                                
+                                # Display chart
+                                st.pyplot(fig)
+                                
+                                st.markdown('<div class="status-box success-box">✅ Static chart created successfully!</div>', unsafe_allow_html=True)
+                                
+                                # Download options for static chart
+                                col1, col2, col3 = st.columns(3)
+                                
+                                with col1:
+                                    # PNG download
+                                    img_buffer = io.BytesIO()
+                                    fig.savefig(img_buffer, format='png', dpi=300, bbox_inches='tight')
+                                    img_buffer.seek(0)
                                     
                                     st.download_button(
-                                        label="📥 Download GIF",
-                                        data=gif_data,
-                                        file_name=gif_filename,
-                                        mime="image/gif"
+                                        label="📷 Download PNG",
+                                        data=img_buffer.getvalue(),
+                                        file_name=f"{custom_title.lower().replace(' ', '_')}_static.png",
+                                        mime="image/png"
                                     )
+                                
+                                with col2:
+                                    # PDF download
+                                    pdf_buffer = io.BytesIO()
+                                    fig.savefig(pdf_buffer, format='pdf', bbox_inches='tight')
+                                    pdf_buffer.seek(0)
                                     
-                                    # Clean up
-                                    os.remove(gif_filename)
+                                    st.download_button(
+                                        label="📄 Download PDF",
+                                        data=pdf_buffer.getvalue(),
+                                        file_name=f"{custom_title.lower().replace(' ', '_')}_static.pdf",
+                                        mime="application/pdf"
+                                    )
+                                
+                                with col3:
+                                    # SVG download
+                                    svg_buffer = io.BytesIO()
+                                    fig.savefig(svg_buffer, format='svg', bbox_inches='tight')
+                                    svg_buffer.seek(0)
+                                    
+                                    st.download_button(
+                                        label="🎨 Download SVG",
+                                        data=svg_buffer.getvalue(),
+                                        file_name=f"{custom_title.lower().replace(' ', '_')}_static.svg",
+                                        mime="image/svg+xml"
+                                    )
+                                
+                                plt.close(fig)  # Clean up memory
+                
+                # Tab 2: Animated Chart
+                with tab2:
+                    st.markdown("### 🎬 Animated Bubble Chart")
+                    
+                    col1, col2 = st.columns([3, 1])
+                    
+                    with col1:
+                        st.markdown('<div class="status-box info-box">💡 This animation shows the transition from start to end data over time.</div>', unsafe_allow_html=True)
+                    
+                    with col2:
+                        if st.button("🎬 Generate Animated Chart", type="primary"):
+                            with st.spinner("Creating animation..."):
+                                # Prepare parameters
+                                params = {
+                                    'x_column': x_column,
+                                    'y_column': y_column,
+                                    'size_column': size_column,
+                                    'category_column': category_column,
+                                    'label_column': label_column,
+                                    'num_frames': num_frames,
+                                    'interval': interval,
+                                    'scale': scale,
+                                    'colors': st.session_state.colors,
+                                    'title': custom_title
+                                }
+                                
+                                # Create and display animation
+                                fig, anim = create_animated_chart(final_start, final_end, params)
+                                
+                                # Convert to HTML
+                                html_str = anim.to_jshtml()
+                                
+                                st.markdown('<div class="status-box success-box">✅ Animation created successfully!</div>', unsafe_allow_html=True)
+                                
+                                # Display animation
+                                st.components.v1.html(html_str, height=600, scrolling=True)
+                                
+                                # Download options
+                                st.markdown("### 📥 Download Options")
+                                
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    # HTML download
+                                    filename = f"{custom_title.lower().replace(' ', '_')}_animation.html"
+                                    st.download_button(
+                                        label="📄 Download HTML",
+                                        data=html_str,
+                                        file_name=filename,
+                                        mime="text/html"
+                                    )
+                                
+                                with col2:
+                                    # GIF download
+                                    if st.button("🎥 Create GIF"):
+                                        with st.spinner("Creating GIF..."):
+                                            gif_filename = f"{custom_title.lower().replace(' ', '_')}_animation.gif"
+                                            writer = PillowWriter(fps=10)
+                                            anim.save(gif_filename, writer=writer)
+                                            
+                                            with open(gif_filename, "rb") as f:
+                                                gif_data = f.read()
+                                            
+                                            st.download_button(
+                                                label="📥 Download GIF",
+                                                data=gif_data,
+                                                file_name=gif_filename,
+                                                mime="image/gif"
+                                            )
+                                            
+                                            # Clean up
+                                            os.remove(gif_filename)
+                                
+                                plt.close(fig)  # Clean up memory
 
 if __name__ == "__main__":
     main()
