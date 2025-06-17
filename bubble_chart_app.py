@@ -57,6 +57,13 @@ st.markdown("""
         border: 1px solid #f5c6cb;
         color: #721c24;
     }
+    .chart-container {
+        border: 2px solid #e6e6e6;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 20px 0;
+        background-color: #fafafa;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -101,6 +108,14 @@ num_frames = st.sidebar.slider("Number of Frames", 30, 200, 100)
 interval = st.sidebar.slider("Speed (ms)", 50, 500, 150)
 scale = st.sidebar.number_input("Size Scale", value=0.000005, format="%.6f")
 
+# NEW: Static horizontal line option
+st.sidebar.subheader("📍 Static Reference Lines")
+use_static_horizontal = st.sidebar.checkbox("Use Static Horizontal Line")
+static_horizontal_value = st.sidebar.number_input("Static Horizontal Value", value=0.0, disabled=not use_static_horizontal)
+
+use_static_vertical = st.sidebar.checkbox("Use Static Vertical Line")
+static_vertical_value = st.sidebar.number_input("Static Vertical Value", value=0.0, disabled=not use_static_vertical)
+
 # Helper functions
 @st.cache_data
 def load_data(file):
@@ -108,6 +123,21 @@ def load_data(file):
     if file is not None:
         return pd.read_csv(file)
     return None
+
+def convert_to_numeric(series, column_name):
+    """Convert series to numeric, handling strings by encoding them"""
+    if pd.api.types.is_numeric_dtype(series):
+        return pd.to_numeric(series, errors='coerce')
+    else:
+        # For non-numeric data, create a categorical encoding
+        unique_values = series.dropna().unique()
+        value_map = {val: i for i, val in enumerate(sorted(unique_values))}
+        numeric_series = series.map(value_map)
+        st.info(f"📝 Column '{column_name}' contains non-numeric data. Converted to numeric using categorical encoding.")
+        with st.expander(f"View encoding for '{column_name}'"):
+            for original, encoded in value_map.items():
+                st.write(f"'{original}' → {encoded}")
+        return numeric_series
 
 def discover_categories_from_data(start_data, end_data, category_column):
     """Discover unique categories"""
@@ -135,23 +165,116 @@ def generate_distinct_colors(num_colors):
     
     return colors
 
-def create_animated_chart(start_data, end_data, params):
-    """Create the animated bubble chart"""
-    # Apply scaling
-    start_scaled = start_data.copy()
-    end_scaled = end_data.copy()
-    start_scaled[params['size_column']] *= params['scale']
-    end_scaled[params['size_column']] *= params['scale']
+def create_static_chart(data, params, title_suffix=""):
+    """Create a static bubble chart"""
+    # Convert columns to numeric
+    data_processed = data.copy()
+    data_processed[params['x_column']] = convert_to_numeric(data[params['x_column']], params['x_column'])
+    data_processed[params['y_column']] = convert_to_numeric(data[params['y_column']], params['y_column'])
+    data_processed[params['size_column']] = convert_to_numeric(data[params['size_column']], params['size_column'])
     
-    # Calculate medians
-    q1median_x = start_scaled[params['x_column']].median()
-    q2median_x = end_scaled[params['x_column']].median()
-    q1median_y = start_scaled[params['y_column']].median()
-    q2median_y = end_scaled[params['y_column']].median()
+    # Apply scaling
+    data_processed[params['size_column']] *= params['scale']
+    
+    # Calculate medians or use static values
+    if params.get('use_static_horizontal', False):
+        median_y = params['static_horizontal_value']
+    else:
+        median_y = data_processed[params['y_column']].median()
+    
+    if params.get('use_static_vertical', False):
+        median_x = params['static_vertical_value']
+    else:
+        median_x = data_processed[params['x_column']].median()
     
     # Set up axis limits
-    all_x = pd.concat([start_scaled[params['x_column']], end_scaled[params['x_column']]])
-    all_y = pd.concat([start_scaled[params['y_column']], end_scaled[params['y_column']]])
+    min_x, max_x = data_processed[params['x_column']].min(), data_processed[params['x_column']].max()
+    min_y, max_y = data_processed[params['y_column']].min(), data_processed[params['y_column']].max()
+    
+    x_range, y_range = max_x - min_x, max_y - min_y
+    x_padding = x_range * 0.15 if x_range > 0 else 1
+    y_padding = y_range * 0.15 if y_range > 0 else 1
+    
+    xlim = (min_x - x_padding, max_x + x_padding)
+    ylim = (min_y - y_padding, max_y + y_padding)
+    
+    # Create plot
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # Create scatter plot
+    ax.scatter(data_processed[params['x_column']], 
+              data_processed[params['y_column']], 
+              s=data_processed[params['size_column']], 
+              alpha=0.75,
+              c=data_processed[params['category_column']].map(params['colors']), 
+              edgecolors='white', linewidth=0.8)
+    
+    # Add median lines
+    ax.axvline(median_x, color='#666666', linestyle='-', linewidth=1.0, alpha=0.8)
+    ax.axhline(median_y, color='#666666', linestyle='-', linewidth=1.0, alpha=0.8)
+    
+    # Add labels
+    for i, (x_val, y_val, title) in enumerate(zip(data_processed[params['x_column']], 
+                                                   data_processed[params['y_column']], 
+                                                   data_processed[params['label_column']])):
+        if pd.notna(title):
+            ax.annotate(str(title), (x_val, y_val), color='black',
+                       textcoords="offset points", xytext=(0, 12), 
+                       ha='center', fontsize=9, fontweight='normal')
+    
+    # Styling
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+    ax.tick_params(labelsize=10)
+    ax.set_facecolor('#FAFAFA')
+    
+    # Add axis labels
+    ax.set_xlabel(params['x_column'], fontsize=12, fontweight='bold')
+    ax.set_ylabel(params['y_column'], fontsize=12, fontweight='bold')
+    
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    
+    ax.set_title(f'{params["title"]} {title_suffix}', 
+                fontsize=14, fontweight='bold')
+    
+    plt.tight_layout()
+    return fig
+
+def create_animated_chart(start_data, end_data, params):
+    """Create the animated bubble chart"""
+    # Convert columns to numeric for both datasets
+    start_processed = start_data.copy()
+    end_processed = end_data.copy()
+    
+    start_processed[params['x_column']] = convert_to_numeric(start_data[params['x_column']], params['x_column'])
+    start_processed[params['y_column']] = convert_to_numeric(start_data[params['y_column']], params['y_column'])
+    start_processed[params['size_column']] = convert_to_numeric(start_data[params['size_column']], params['size_column'])
+    
+    end_processed[params['x_column']] = convert_to_numeric(end_data[params['x_column']], params['x_column'])
+    end_processed[params['y_column']] = convert_to_numeric(end_data[params['y_column']], params['y_column'])
+    end_processed[params['size_column']] = convert_to_numeric(end_data[params['size_column']], params['size_column'])
+    
+    # Apply scaling
+    start_processed[params['size_column']] *= params['scale']
+    end_processed[params['size_column']] *= params['scale']
+    
+    # Calculate medians or use static values
+    if params.get('use_static_horizontal', False):
+        q1median_y = q2median_y = params['static_horizontal_value']
+    else:
+        q1median_y = start_processed[params['y_column']].median()
+        q2median_y = end_processed[params['y_column']].median()
+    
+    if params.get('use_static_vertical', False):
+        q1median_x = q2median_x = params['static_vertical_value']
+    else:
+        q1median_x = start_processed[params['x_column']].median()
+        q2median_x = end_processed[params['x_column']].median()
+    
+    # Set up axis limits
+    all_x = pd.concat([start_processed[params['x_column']], end_processed[params['x_column']]])
+    all_y = pd.concat([start_processed[params['y_column']], end_processed[params['y_column']]])
     
     min_x, max_x = all_x.min(), all_x.max()
     min_y, max_y = all_y.min(), all_y.max()
@@ -172,13 +295,13 @@ def create_animated_chart(start_data, end_data, params):
         progress = frame / (params['num_frames'] - 1) if params['num_frames'] > 1 else 0
         
         # Interpolate data
-        x = start_scaled[params['x_column']] + (end_scaled[params['x_column']] - start_scaled[params['x_column']]) * progress
-        y = start_scaled[params['y_column']] + (end_scaled[params['y_column']] - start_scaled[params['y_column']]) * progress
-        sizes = start_scaled[params['size_column']] + (end_scaled[params['size_column']] - start_scaled[params['size_column']]) * progress
+        x = start_processed[params['x_column']] + (end_processed[params['x_column']] - start_processed[params['x_column']]) * progress
+        y = start_processed[params['y_column']] + (end_processed[params['y_column']] - start_processed[params['y_column']]) * progress
+        sizes = start_processed[params['size_column']] + (end_processed[params['size_column']] - start_processed[params['size_column']]) * progress
         
         # Create scatter plot
         ax.scatter(x, y, s=sizes, alpha=0.75, 
-                  c=start_scaled[params['category_column']].map(params['colors']), 
+                  c=start_processed[params['category_column']].map(params['colors']), 
                   edgecolors='white', linewidth=0.8)
         
         # Add median lines
@@ -189,7 +312,7 @@ def create_animated_chart(start_data, end_data, params):
         ax.axhline(current_y_pos, color='#666666', linestyle='-', linewidth=1.0, alpha=0.8)
         
         # Add labels
-        for i, (x_val, y_val, title) in enumerate(zip(x, y, start_scaled[params['label_column']])):
+        for i, (x_val, y_val, title) in enumerate(zip(x, y, start_processed[params['label_column']])):
             if pd.notna(title):
                 ax.annotate(str(title), (x_val, y_val), color='black',
                            textcoords="offset points", xytext=(0, 12), 
@@ -198,10 +321,12 @@ def create_animated_chart(start_data, end_data, params):
         # Styling
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)
-        ax.set_xticklabels([])
-        ax.set_yticklabels([])
-        ax.tick_params(left=False, bottom=False)
+        ax.tick_params(labelsize=10)
         ax.set_facecolor('#FAFAFA')
+        
+        # Add axis labels
+        ax.set_xlabel(params['x_column'], fontsize=12, fontweight='bold')
+        ax.set_ylabel(params['y_column'], fontsize=12, fontweight='bold')
         
         for spine in ax.spines.values():
             spine.set_visible(False)
@@ -234,12 +359,24 @@ def main():
             with col1:
                 st.subheader("📈 Start Data")
                 st.write(f"Shape: {start_data.shape}")
-                st.dataframe(start_data.head())
+                st.dataframe(start_data.head(), height=200)
             
             with col2:
                 st.subheader("📉 End Data")
                 st.write(f"Shape: {end_data.shape}")
-                st.dataframe(end_data.head())
+                st.dataframe(end_data.head(), height=200)
+            
+            # Show column types
+            st.subheader("📊 Column Information")
+            col_info_col1, col_info_col2 = st.columns(2)
+            
+            with col_info_col1:
+                st.write("**Start Data Column Types:**")
+                st.write(start_data.dtypes.to_dict())
+            
+            with col_info_col2:
+                st.write("**End Data Column Types:**")  
+                st.write(end_data.dtypes.to_dict())
             
             # Discover categories
             if category_column in start_data.columns:
@@ -344,76 +481,105 @@ def main():
                     selected_indices = [opt[1] for opt in options if opt[0] in selected_in_category]
                     selected_points.extend(selected_indices)
             
-            # Step 5: Generate Animation
+            # Step 5: Generate Charts
             if selected_points:
-                st.markdown('<div class="step-header">🎬 Step 5: Generate Animation</div>', unsafe_allow_html=True)
+                st.markdown('<div class="step-header">🎬 Step 5: Generate Charts</div>', unsafe_allow_html=True)
                 
-                if st.button("🎬 Generate Animated Chart", type="primary"):
-                    with st.spinner("Creating animation..."):
-                        # Filter data to selected points
-                        final_start = start_data.iloc[selected_points].copy().reset_index(drop=True)
-                        final_end = end_data.iloc[selected_points].copy().reset_index(drop=True)
-                        
-                        # Prepare parameters
-                        params = {
-                            'x_column': x_column,
-                            'y_column': y_column,
-                            'size_column': size_column,
-                            'category_column': category_column,
-                            'label_column': label_column,
-                            'num_frames': num_frames,
-                            'interval': interval,
-                            'scale': scale,
-                            'colors': st.session_state.colors,
-                            'title': custom_title
-                        }
-                        
-                        # Create and display animation
-                        fig, anim = create_animated_chart(final_start, final_end, params)
-                        
-                        # Convert to HTML
-                        html_str = anim.to_jshtml()
-                        
-                        st.markdown('<div class="status-box success-box">✅ Animation created successfully!</div>', unsafe_allow_html=True)
-                        
-                        # Display animation
-                        st.components.v1.html(html_str, height=1000, scrolling=True)
-                        
-                        # Download options
-                        st.markdown("### 📥 Download Options")
-                        
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            # HTML download
-                            filename = f"{custom_title.lower().replace(' ', '_')}_animation.html"
+                # Filter data to selected points
+                final_start = start_data.iloc[selected_points].copy().reset_index(drop=True)
+                final_end = end_data.iloc[selected_points].copy().reset_index(drop=True)
+                
+                # Prepare parameters
+                params = {
+                    'x_column': x_column,
+                    'y_column': y_column,
+                    'size_column': size_column,
+                    'category_column': category_column,
+                    'label_column': label_column,
+                    'num_frames': num_frames,
+                    'interval': interval,
+                    'scale': scale,
+                    'colors': st.session_state.colors,
+                    'title': custom_title,
+                    'use_static_horizontal': use_static_horizontal,
+                    'static_horizontal_value': static_horizontal_value,
+                    'use_static_vertical': use_static_vertical,
+                    'static_vertical_value': static_vertical_value
+                }
+                
+                chart_col1, chart_col2 = st.columns(2)
+                
+                with chart_col1:
+                    if st.button("📊 Generate Static Chart (End Data)", type="primary"):
+                        with st.spinner("Creating static chart..."):
+                            fig_static = create_static_chart(final_end, params, "- End State")
+                            
+                            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                            st.markdown("### 📊 Static Bubble Chart (End Data)")
+                            st.pyplot(fig_static, use_container_width=True)
+                            st.markdown('</div>', unsafe_allow_html=True)
+                            
+                            # Download static chart
+                            buf = io.BytesIO()
+                            fig_static.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+                            buf.seek(0)
+                            
                             st.download_button(
-                                label="📄 Download HTML",
-                                data=html_str,
-                                file_name=filename,
-                                mime="text/html"
+                                label="📥 Download Static Chart (PNG)",
+                                data=buf.getvalue(),
+                                file_name=f"{custom_title.lower().replace(' ', '_')}_static.png",
+                                mime="image/png"
                             )
-                        
-                        with col2:
-                            # GIF download
-                            if st.button("🎥 Create GIF"):
-                                with st.spinner("Creating GIF..."):
-                                    gif_filename = f"{custom_title.lower().replace(' ', '_')}_animation.gif"
-                                    writer = PillowWriter(fps=10)
-                                    anim.save(gif_filename, writer=writer)
-                                    
-                                    with open(gif_filename, "rb") as f:
-                                        gif_data = f.read()
-                                    
-                                    st.download_button(
-                                        label="📥 Download GIF",
-                                        data=gif_data,
-                                        file_name=gif_filename,
-                                        mime="image/gif"
-                                    )
-                                    
-                                    # Clean up
-                                    os.remove(gif_filename)
+                
+                with chart_col2:
+                    if st.button("🎬 Generate Animated Chart", type="primary"):
+                        with st.spinner("Creating animation..."):
+                            # Create and display animation
+                            fig, anim = create_animated_chart(final_start, final_end, params)
+                            
+                            # Convert to HTML
+                            html_str = anim.to_jshtml()
+                            
+                            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+                            st.markdown("### 🎬 Animated Bubble Chart")
+                            st.components.v1.html(html_str, height=800, scrolling=False)
+                            st.markdown('</div>', unsafe_allow_html=True)
+                            
+                            # Download options
+                            st.markdown("### 📥 Download Animation")
+                            
+                            download_col1, download_col2 = st.columns(2)
+                            
+                            with download_col1:
+                                # HTML download
+                                filename = f"{custom_title.lower().replace(' ', '_')}_animation.html"
+                                st.download_button(
+                                    label="📄 Download HTML",
+                                    data=html_str,
+                                    file_name=filename,
+                                    mime="text/html"
+                                )
+                            
+                            with download_col2:
+                                # GIF download
+                                if st.button("🎥 Create GIF"):
+                                    with st.spinner("Creating GIF..."):
+                                        gif_filename = f"{custom_title.lower().replace(' ', '_')}_animation.gif"
+                                        writer = PillowWriter(fps=10)
+                                        anim.save(gif_filename, writer=writer)
+                                        
+                                        with open(gif_filename, "rb") as f:
+                                            gif_data = f.read()
+                                        
+                                        st.download_button(
+                                            label="📥 Download GIF",
+                                            data=gif_data,
+                                            file_name=gif_filename,
+                                            mime="image/gif"
+                                        )
+                                        
+                                        # Clean up
+                                        os.remove(gif_filename)
 
 if __name__ == "__main__":
     main()
